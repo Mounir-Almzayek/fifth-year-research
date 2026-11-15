@@ -341,3 +341,34 @@ except Exception as e:
  out("decoded_7122_error.json",{"error":type(e).__name__+":"+str(e)[:220]})
 reverse2024=query(f"{SER}[][2024.05.10_00:00:00_TAI]","HARPNUM,NOAA_AR,NOAA_ARS,NOAA_NUM,T_REC,QUALITY")
 out("reverse_cea_2024_11149.json",reverse2024)
+
+
+# Official SHARP scalar-keyword descriptors from the exact same definitive
+# CEA records. Source values are instrument's precomputed magnetic baseline;
+# do not backpropagate label knowledge or claim original optical mask truth.
+keyword_keys="HARPNUM,NOAA_AR,NOAA_NUM,NOAA_ARS,T_REC,QUALITY,USFLUX,MEANGAM,MEANGBT,MEANGBH,MEANGBZ,MEANJZD,TOTUSJZ,MEANALP,MEANJZH,TOTUSJH,SAVNCPP,MEANPOT,TOTPOT,MEANSHR,SHRGT45,R_VALUE,AREA_ACR"
+archive_records=[
+ (7115,"2017.09.04_00:00:00_TAI"),
+ (7122,"2017.09.04_00:00:00_TAI"),
+ (9781,"2023.07.16_00:36:00_TAI"),
+ (9802,"2023.07.16_00:36:00_TAI"),
+ (11149,"2024.05.10_00:00:00_TAI"),
+ (11170,"2024.05.13_00:36:00_TAI"),
+ (11220,"2024.05.13_00:36:00_TAI"),
+ (12941,"2025.03.22_00:36:00_TAI"),
+]
+derived=[]
+for harp,epoch in archive_records:
+ rec={"harpnum":harp,"t_rec":epoch,"status":"SOURCE_UNAVAILABLE","scientifically_accepted":False}
+ r=query(f"{SER}[{harp}][{epoch}]",keyword_keys)
+ out(f"sharp_derived_keyword_record_{harp}.json",r)
+ if r["ok"]:
+  try:
+   v=rows(r["data"],"keywords")
+   if len(v)==1 and v[0]["HARPNUM"]==str(harp):
+    rec.update(status="ACTUAL_JSOC_SOURCE_KEYWORDS",source_sha256=r["sha256"],keywords=v[0])
+   else:rec["status"]="UNEXPECTED_RECORD_COUNT"
+  except Exception as e:rec["error"]=type(e).__name__+":"+str(e)[:150]
+ else:rec["failures"]=r["attempts"]
+ derived.append(rec)
+out("original_sharp_derived_features.json",derived)
