@@ -1,0 +1,31 @@
+name: Solar Data Source Evidence (research branch only)
+on:
+  push:
+    branches: [solar-data-recovery-20261115]
+    paths:
+      - research/solar_recovery/**
+      - .github/workflows/solar-source-recovery.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  collect-public-solar-sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install data reader dependencies
+        run: python -m pip install --disable-pip-version-check requests numpy astropy
+      - name: Collect public JSOC/NOAA source data (never claims science approval)
+        run: python research/solar_recovery/source_probe.py
+      - name: Preserve exact raw-byte evidence and source status
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solar-source-evidence
+          path: solar-evidence/
+          if-no-files-found: warn
+          retention-days: 7
