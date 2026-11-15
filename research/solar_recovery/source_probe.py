@@ -266,3 +266,56 @@ for d in ("2024-05-14","2024-05-15","2023-07-15","2023-07-16","2023-07-17","2025
    state.update(status="SOURCE_BYTES_ACQUIRED",bytes=len(contents),sha256=sha(contents))
   except Exception as e:state["error"]=type(e).__name__+":"+str(e)[:180]
   out("noaa_extended_"+name+".json",state)
+
+
+# Deterministically selected cross-epoch one-NOAA CEA source candidates, from
+# actual 2023/2024/2025 same-time official CEA reverse query. Mixed complexity
+# and epoch; not selected by future flare labels, no approved family graph yet.
+CLEAN_SAMPLE=[
+ ("2023.07.16_00:36:00_TAI",9781,13363),
+ ("2023.07.16_00:36:00_TAI",9802,13372),
+ ("2024.05.13_00:36:00_TAI",11170,13667),
+ ("2024.05.13_00:36:00_TAI",11220,13677),
+ ("2025.03.22_00:36:00_TAI",12906,14026),
+ ("2025.03.22_00:36:00_TAI",12941,14035),
+]
+clean_samples=[]
+for epoch,harp,noaa in CLEAN_SAMPLE:
+ result={"epoch":epoch,"harp":harp,"noaa":noaa,"state":"UNKNOWN","accepted":False}
+ reverse=query(f"{SER}[][{epoch}]","HARPNUM,NOAA_AR,NOAA_ARS,NOAA_NUM,T_REC,QUALITY")
+ if not reverse["ok"]:
+  result["state"]="SOURCE_UNAVAILABLE";clean_samples.append(result);continue
+ rr=rows(reverse["data"],"keywords")
+ valid=[r for r in rr if r.get("NOAA_AR")==str(noaa) and r.get("NOAA_ARS")==str(noaa) and r.get("NOAA_NUM")=="1" and r.get("HARPNUM")==str(harp)]
+ all_matches=[r for r in rr if str(noaa) in str(r.get("NOAA_ARS","")).split(",")]
+ if len(valid)!=1 or len(all_matches)!=1:
+  result["state"]="REVERSE_IDENTITY_AMBIGUOUS";clean_samples.append(result);continue
+ exact=query(f"{SER}[{harp}][{epoch}]",FIELDS,",".join(SEGS))
+ out(f"clean_exact_{harp}.json",exact)
+ if not exact["ok"]:
+  result["state"]="EXACT_CEA_SOURCE_UNAVAILABLE";clean_samples.append(result);continue
+ try:
+  records=rows(exact["data"],"keywords");segments=rows(exact["data"],"segments")
+  if len(records)!=1 or len(segments)!=1 or records[0].get("NOAA_NUM")!="1" or records[0].get("NOAA_ARS")!=str(noaa):
+   raise ValueError("EXACT_CEA_IDENTITY_REJECTED")
+  result["record"]=records[0]
+  result["files"]=[download(harp,s,segments[0].get(s)) for s in SEGS]
+  if not all(x["state"]=="SOURCE_FITS_ACQUIRED" for x in result["files"]):
+   result["state"]="INCOMPLETE_SEGMENTS"
+  else:
+   result["state"]="SOURCE_ACQUIRED_NEEDS_PHYSICAL_REVIEW"
+   import numpy as np
+   from astropy.io import fits
+   dec={}
+   for seg in SEGS:
+    with fits.open(O/f"fits_{harp}"/f"{seg}.fits",memmap=False) as hdus:
+     candidates=[np.asarray(h.data) for h in hdus if getattr(h.data,"ndim",0)==2]
+     if len(candidates)!=1:raise ValueError("SOURCE_IMAGE_HDU_REQUIRED")
+     dec[seg]=candidates[0].astype("float32")
+   np.savez_compressed(O/f"hmi_{harp}_clean_candidate_pixels.npz",**dec)
+   result["decoded"]={k:{"shape":list(v.shape),"finite_fraction":float(np.isfinite(v).mean())} for k,v in dec.items()}
+ except Exception as e:
+  result["state"]="SOURCE_OR_DECODE_QA_ERROR"
+  result["error"]=type(e).__name__+":"+str(e)[:260]
+ clean_samples.append(result)
+out("clean_cross_epoch_sources.json",clean_samples)
