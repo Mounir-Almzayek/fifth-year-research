@@ -372,3 +372,62 @@ for harp,epoch in archive_records:
  else:rec["failures"]=r["attempts"]
  derived.append(rec)
 out("original_sharp_derived_features.json",derived)
+
+
+# Bounded *real* 12-minute temporal verification on two clean 2017 physical
+# active-region candidates. Adds 4 distinct timestamps for each HARP (continuum
+# and Br only), never treats repeated frames as independent training groups.
+series=[]
+for harp,noaa in ((7115,12673),(7122,12677)):
+ for minute in (12,24,36,48):
+  epoch=f"2017.09.04_00:{minute:02d}:00_TAI"
+  entry={"harpnum":harp,"noaa_candidate":noaa,"t_rec":epoch,
+         "state":"SOURCE_UNAVAILABLE","scientific_training_label":"UNKNOWN"}
+  direct=query(f"{SER}[{harp}][{epoch}]",FIELDS,"continuum,Br")
+  reverse=query(f"{SER}[][{epoch}]","HARPNUM,NOAA_AR,NOAA_ARS,NOAA_NUM,T_REC,QUALITY")
+  out(f"temporal_exact_{harp}_{minute:02d}.json",direct)
+  out(f"temporal_reverse_{harp}_{minute:02d}.json",reverse)
+  if not (direct["ok"] and reverse["ok"]):
+   entry["state"]="METADATA_OR_REVERSE_UNAVAILABLE";series.append(entry);continue
+  try:
+   rows1=rows(direct["data"],"keywords")
+   sides=rows(direct["data"],"segments")
+   rivals=rows(reverse["data"],"keywords")
+   matching=[x for x in rivals if str(noaa) in str(x.get("NOAA_ARS","")).split(",")]
+   if len(rows1)!=1 or len(sides)!=1 or len(matching)!=1 or matching[0]["HARPNUM"]!=str(harp) or rows1[0].get("NOAA_NUM")!="1" or rows1[0].get("NOAA_ARS")!=str(noaa):
+    entry["state"]="IDENTITY_NOT_ONE_TO_ONE";series.append(entry);continue
+   entry["source_keywords"]=rows1[0]
+   original={}
+   import numpy as np
+   from astropy.io import fits
+   arrays={}
+   for seg in ("continuum","Br"):
+    rel=sides[0].get(seg)
+    if not isinstance(rel,str) or not rel.startswith("/SUM") or ".." in rel:raise ValueError("UNSAFE_SEGMENT_PATH")
+    failures=[]
+    source_bytes=None
+    for host in ("https://jsoc1.stanford.edu","https://jsoc.stanford.edu"):
+     try:
+      body,u=get(host+rel,cap=15000000)
+      if not body.startswith(b"SIMPLE  =") or len(body)%2880:raise ValueError("FITS_INVALID")
+      source_bytes=body
+      original[seg]={"url":u,"bytes":len(body),"sha256":sha(body)}
+      break
+     except Exception as e:failures.append(str(e)[:120])
+    if source_bytes is None:raise ValueError("SEGMENT_UNAVAILABLE:"+seg+":"+str(failures))
+    target=O/f"temporal_fits_{harp}"/f"{minute:02d}"
+    target.mkdir(exist_ok=True,parents=True)
+    (target/f"{seg}.fits").write_bytes(source_bytes)
+    with fits.open(target/f"{seg}.fits",memmap=False) as hdus:
+     im=[np.asarray(h.data) for h in hdus if getattr(h.data,"ndim",0)==2]
+     if len(im)!=1:raise ValueError("INVALID_IMAGE_HDU")
+     arrays[seg]=im[0].astype("float32")
+   if arrays["continuum"].shape!=arrays["Br"].shape:raise ValueError("TEMPORAL_SHAPE_MISMATCH")
+   entry["files"]=original
+   entry["shape"]=list(arrays["Br"].shape)
+   entry["state"]="ORIGINAL_TEMPORAL_FITS_ACQUIRED"
+   np.savez_compressed(O/f"temporal_hmi_{harp}_{minute:02d}.npz",**arrays)
+  except Exception as e:
+   entry["state"]="TEMPORAL_AUDIT_ERROR";entry["error"]=type(e).__name__+":"+str(e)[:220]
+  series.append(entry)
+out("twelve_minute_original_temporal_source_qa.json",series)
