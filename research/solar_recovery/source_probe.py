@@ -195,3 +195,74 @@ for date in ("2024-05-08","2024-05-09","2024-05-10","2024-05-11","2024-05-12"):
    entry.update(status="SOURCE_BYTES_ACQUIRED",bytes=len(data),sha256=sha(data))
   except Exception as e:entry["error"]=type(e).__name__+": "+str(e)[:180]
   out("noaa_may_2024_"+name+".json",entry)
+
+
+# Cross-epoch, deliberately bounded official CEA candidate discovery.
+# Candidate NOAA IDs are sourced from previously archived NOAA SRS dates,
+# NOT asserted to be independently verified until the full original join.
+CROSS_EPOCH=[
+ ("2024.05.13_00:36:00_TAI",13674,"may_2024_target_M1_candidate"),
+ ("2023.07.16_00:36:00_TAI",13371,"jul_2023_control_candidate"),
+ ("2025.03.22_00:36:00_TAI",14030,"mar_2025_control_candidate"),
+]
+multi_epoch=[]
+for epoch,noaa,title in CROSS_EPOCH:
+ rec={"epoch":epoch,"noaa_candidate":noaa,"title":title,"scientifically_accepted":False,"files":[]}
+ rev=query(f"{SER}[][{epoch}]","HARPNUM,NOAA_AR,NOAA_NUM,NOAA_ARS,T_REC,QUALITY")
+ out(f"epoch_reverse_{title}.json",rev)
+ if not rev["ok"]:
+  rec["state"]="SOURCE_UNAVAILABLE";rec["errors"]=rev["attempts"];multi_epoch.append(rec);continue
+ try:
+  raw_rows=rows(rev["data"],"keywords")
+  def any_noaa(row):
+   return noaa in [int(x) for x in str(row.get("NOAA_ARS","")).split(",") if x.strip().isdigit()]
+  matches=[row for row in raw_rows if any_noaa(row)]
+  rec["matching_reverse_rows"]=matches
+  if len(matches)!=1 or int(matches[0].get("NOAA_NUM",0))!=1 or int(matches[0].get("NOAA_AR",0))!=noaa:
+   rec["state"]="NO_UNIQUE_ONE_NOAA_HARP";multi_epoch.append(rec);continue
+  harp=int(matches[0]["HARPNUM"])
+  rec["harpnum"]=harp
+  exact=query(f"{SER}[{harp}][{epoch}]",FIELDS,",".join(SEGS))
+  out(f"epoch_exact_{title}.json",exact)
+  if not exact["ok"]:
+   rec["state"]="EXACT_SOURCE_UNAVAILABLE";multi_epoch.append(rec);continue
+  er=rows(exact["data"],"keywords");sg=rows(exact["data"],"segments")
+  if len(er)!=1 or len(sg)!=1 or int(er[0]["NOAA_NUM"])!=1 or int(er[0]["NOAA_AR"])!=noaa:
+   rec["state"]="EXACT_JOIN_REJECTED";multi_epoch.append(rec);continue
+  rec["record"]=er[0]
+  rec["files"]=[download(harp,s,sg[0].get(s)) for s in SEGS]
+  rec["state"]="SOURCE_ACQUIRED_NEEDS_SCIENCE_REVIEW" if all(x["state"]=="SOURCE_FITS_ACQUIRED" for x in rec["files"]) else "INCOMPLETE_SEGMENTS"
+  if rec["state"]=="SOURCE_ACQUIRED_NEEDS_SCIENCE_REVIEW":
+   try:
+    import numpy as np
+    from astropy.io import fits
+    src=O/("fits_"+str(harp))
+    dec={}
+    for seg in SEGS:
+     with fits.open(src/(seg+".fits"),memmap=False) as hdus:
+      candidate=[np.asarray(h.data) for h in hdus if getattr(h.data,"ndim",0)==2]
+      if len(candidate)!=1:raise ValueError("ONE_IMAGE_REQUIRED_"+seg)
+      dec[seg]=candidate[0].astype("float32")
+    np.savez_compressed(O/("hmi_"+str(harp)+"_epoch_pixel_arrays.npz"),**dec)
+    rec["decoded"]={k:{"shape":list(v.shape),"finite_fraction":float(np.isfinite(v).mean())} for k,v in dec.items()}
+   except Exception as e:rec["decode_error"]=type(e).__name__+":"+str(e)[:220]
+ except Exception as e:
+  rec["state"]="AUDIT_ERROR";rec["error"]=type(e).__name__+":"+str(e)[:220]
+ multi_epoch.append(rec)
+out("cross_epoch_discovery.json",multi_epoch)
+
+# Three-day source-horizon review files only; no unearned negative-label
+# acceptances. NOAA SRS and edited XRA must be adjudicated as-of separately.
+for d in ("2024-05-14","2024-05-15","2023-07-15","2023-07-16","2023-07-17","2025-03-21","2025-03-22","2025-03-23"):
+ day=datetime.date.fromisoformat(d)
+ for category,sfx in (("solar_region_summaries","SRS"),("solar_event_reports","events")):
+  name=day.strftime("%Y%m%d")+sfx+".txt"
+  url=f"https://www.ngdc.noaa.gov/stp/space-weather/swpc-products/daily_reports/{category}/{day:%Y/%m/}{name}"
+  state={"url":url,"status":"SOURCE_UNAVAILABLE"}
+  try:
+   contents,got=get(url,cap=1000000)
+   if len(contents)<50 or b"<html" in contents[:200].lower():raise ValueError("SOURCE_TEXT_INVALID")
+   (O/"noaa").mkdir(exist_ok=True);(O/"noaa"/name).write_bytes(contents)
+   state.update(status="SOURCE_BYTES_ACQUIRED",bytes=len(contents),sha256=sha(contents))
+  except Exception as e:state["error"]=type(e).__name__+":"+str(e)[:180]
+  out("noaa_extended_"+name+".json",state)
