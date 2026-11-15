@@ -21,7 +21,7 @@ def get(url,params=None,cap=14000000):
   return bytes(body),r.url
 def query(ds,keys,segs=None):
  attempts=[]
- for host in ("https://jsoc.stanford.edu","https://jsoc1.stanford.edu"):
+ for host in ("http://jsoc.stanford.edu","https://jsoc.stanford.edu","https://jsoc1.stanford.edu"):
   try:
    q={"op":"rs_list","ds":ds,"key":keys}
    if segs:q["seg"]=segs
@@ -145,3 +145,53 @@ try:
  out("thirdparty_2014_source_audit.json",sample)
 except Exception as e:
  out("thirdparty_2014_source_error.json",{"type":type(e).__name__,"error":str(e)[:400]})
+
+
+# Separate 2024 multi-NOAA HARP stress case, independently documented on
+# the project's 2026-11-06 original JSOC acquisition. Not an eligible
+# one-NOAA flare-label row; valuable for real optical/magnetic CV QA.
+T24="2024.05.10_00:00:00_TAI";H24=11149
+q24=query(f"{SER}[{H24}][{T24}]",FIELDS,",".join(SEGS))
+out("query_11149_2024.json",q24)
+test24={"harp":H24,"t_rec":T24,"status":"MULTI_NOAA_CV_STRESS_ONLY","metadata_retrieved":q24["ok"]}
+if q24["ok"]:
+ try:
+  rr=rows(q24["data"],"keywords");ss=rows(q24["data"],"segments")
+  test24["records"]=rr
+  if len(rr)==len(ss)==1:test24["files"]=[download(H24,s,ss[0].get(s)) for s in SEGS]
+  else:test24["problem"]="NOT_SINGLE_CEA_RECORD"
+ except Exception as e:test24["problem"]=type(e).__name__+": "+str(e)
+else:
+ test24["static_path_from_earlier_verified_source"]=True
+ test24["files"]=[download(H24,s,"/SUM97/D1753927374/S00000/"+s+".fits") for s in SEGS]
+out("harp_11149_2024.json",test24)
+try:
+ from astropy.io import fits
+ import numpy as np
+ dp=O/"fits_11149"
+ if all((dp/(s+".fits")).exists() for s in SEGS):
+  data24={}
+  for seg in SEGS:
+   with fits.open(dp/(seg+".fits"),memmap=False) as hdus:
+    arrays=[np.asarray(h.data) for h in hdus if getattr(h.data,"ndim",0)==2]
+    if len(arrays)!=1:raise ValueError("ONE_IMAGE_HDU_REQUIRED_"+seg)
+    data24[seg]=arrays[0].astype("float32")
+  np.savez_compressed(O/"hmi_11149_2024_original_pixel_arrays.npz",**data24)
+  out("decoded_11149_2024_manifest.json",{"scientific_label":"UNKNOWN_MULTI_NOAA","arrays":{s:{"shape":list(a.shape),"finite_fraction":float(np.isfinite(a).mean())} for s,a in data24.items()}})
+except Exception as e:out("decoded_11149_2024_error.json",{"error":str(e)})
+
+# Additional original daily NOAA source bytes to cross-check the May 2024
+# event study, without implying complete negative-label coverage.
+for date in ("2024-05-08","2024-05-09","2024-05-10","2024-05-11","2024-05-12"):
+ d=datetime.date.fromisoformat(date)
+ for cat,suffix in (("solar_region_summaries","SRS"),("solar_event_reports","events")):
+  name=d.strftime("%Y%m%d")+suffix+".txt"
+  url=f"https://www.ngdc.noaa.gov/stp/space-weather/swpc-products/daily_reports/{cat}/{d:%Y/%m/}{name}"
+  entry={"url":url,"status":"SOURCE_UNAVAILABLE"}
+  try:
+   data,u=get(url,cap=1000000)
+   if len(data)<50 or b"<html" in data[:200].lower():raise ValueError("INVALID_SOURCE_TEXT")
+   folder=O/"noaa";folder.mkdir(exist_ok=True);(folder/name).write_bytes(data)
+   entry.update(status="SOURCE_BYTES_ACQUIRED",bytes=len(data),sha256=sha(data))
+  except Exception as e:entry["error"]=type(e).__name__+": "+str(e)[:180]
+  out("noaa_may_2024_"+name+".json",entry)
