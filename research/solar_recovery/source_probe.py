@@ -99,3 +99,49 @@ for date in ("2017-09-03","2017-09-04","2017-09-05","2024-05-13"):
   RESULT["noaa"].append(r)
 out("summary.json",RESULT)
 print(json.dumps({"harps":[{"harp":h["harp"],"metadata":h["source_metadata_ok"],"fits":sum(f["state"]=="SOURCE_FITS_ACQUIRED" for f in h.get("files",[]))} for h in RESULT["harps"]],"noaa_files":sum(r["state"]=="SOURCE_BYTES_ACQUIRED" for r in RESULT["noaa"]),"science_gate_accepted":False},indent=2))
+
+
+# Export scientific pixel arrays of the *actual* original 2017 FITS in the
+# exact physical values decoded by Astropy, to permit CV QA in offline environments.
+try:
+ import numpy as np
+ from astropy.io import fits
+ dir7115=O/"fits_7115"
+ sources={s:dir7115/(s+".fits") for s in SEGS}
+ if all(path.exists() for path in sources.values()):
+  raw_arrays={}
+  for seg,path in sources.items():
+   with fits.open(path,memmap=False) as hdus:
+    a=[np.asarray(x.data) for x in hdus if getattr(x.data,"ndim",0)==2]
+    if len(a)!=1:raise ValueError("EXPECTED_ONE_2D_HDU_"+seg)
+    raw_arrays[seg]=a[0].astype("float32")
+  np.savez_compressed(O/"hmi_7115_original_pixel_arrays.npz",**raw_arrays)
+  out("decoded_array_manifest.json",{"origin":"JSOC1 original source HARP7115 2017-09-04", "note":"NUMPY ARRAYS NOT INDEPENDENT GROUND TRUTH","arrays":{k:{"shape":list(v.shape),"min":float(np.nanmin(v)),"max":float(np.nanmax(v)),"finite_fraction":float(np.isfinite(v).mean())} for k,v in raw_arrays.items()}})
+except Exception as e:
+ out("decoded_array_error.json",{"error":type(e).__name__+": "+str(e)})
+
+# Auxiliary 2014 optical test case, obtained from third-party GitHub; the
+# published mask is algorithm-generated and explicitly NOT independent truth.
+try:
+ from io import BytesIO
+ import numpy as np
+ from astropy.io import fits
+ root="https://raw.githubusercontent.com/wangzai15/sunspot-mat/main/"
+ paths={"continuum":"norm_sub_hmi.ic_45s.20140811_083000_TAI.2.continuum.fits","auto_mask":"ternary_mask.npy"}
+ sample={"role":"THIRD_PARTY_CV_ONLY","independent_reference_mask":False,"files":{}}
+ for kind,path in paths.items():
+  b,u=get(root+path,cap=7000000)
+  info={"source_url":u,"bytes":len(b),"sha256":sha(b)}
+  if kind=="continuum":
+   with fits.open(BytesIO(b),memmap=False) as hdus:
+    img=np.asarray(hdus[0].data)
+    info.update(shape=list(img.shape),finite_fraction=float(np.isfinite(img).mean()),
+                min=float(np.nanmin(img)),max=float(np.nanmax(img)))
+  else:
+   mask=np.load(BytesIO(b),allow_pickle=False)
+   unique,counts=np.unique(mask,return_counts=True)
+   info.update(shape=list(mask.shape),class_histogram={str(k):int(v) for k,v in zip(unique,counts)})
+  sample["files"][kind]=info
+ out("thirdparty_2014_source_audit.json",sample)
+except Exception as e:
+ out("thirdparty_2014_source_error.json",{"type":type(e).__name__,"error":str(e)[:400]})
