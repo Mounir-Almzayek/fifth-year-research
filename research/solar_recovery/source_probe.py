@@ -319,3 +319,25 @@ for epoch,harp,noaa in CLEAN_SAMPLE:
   result["error"]=type(e).__name__+":"+str(e)[:260]
  clean_samples.append(result)
 out("clean_cross_epoch_sources.json",clean_samples)
+
+
+# Close remaining original HARP7122 raw-array decoding evidence and obtain
+# the 2024 multi-NOAA reverse metadata independently (never accepted labels).
+try:
+ import numpy as np
+ from astropy.io import fits
+ target=O/"fits_7122"
+ pixel={}
+ if all((target/(s+".fits")).is_file() for s in SEGS):
+  for seg in SEGS:
+   with fits.open(target/(seg+".fits"),memmap=False) as hdus:
+    dd=[np.asarray(h.data) for h in hdus if getattr(h.data,"ndim",0)==2]
+    if len(dd)!=1:raise ValueError("HARP7122_EXPECTED_ONE_2D_HDU")
+    pixel[seg]=dd[0].astype("float32")
+  np.savez_compressed(O/"hmi_7122_original_pixel_arrays.npz",**pixel)
+  out("decoded_7122_manifest.json",{"harp":7122,"noaa":12677,"independent_ground_truth":False,
+    "segments":{k:{"shape":list(v.shape),"finite_fraction":float(np.isfinite(v).mean())} for k,v in pixel.items()}})
+except Exception as e:
+ out("decoded_7122_error.json",{"error":type(e).__name__+":"+str(e)[:220]})
+reverse2024=query(f"{SER}[][2024.05.10_00:00:00_TAI]","HARPNUM,NOAA_AR,NOAA_ARS,NOAA_NUM,T_REC,QUALITY")
+out("reverse_cea_2024_11149.json",reverse2024)
