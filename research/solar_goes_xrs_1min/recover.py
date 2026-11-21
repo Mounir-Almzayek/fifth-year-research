@@ -2,7 +2,7 @@
 """Source-byte GOES-16/18 1min XRS source recovery for HARP12941 window.
 Never marks negative without instrument quality/continuous coverage review.
 """
-import datetime,hashlib,json,pathlib,unittest
+import datetime,hashlib,json,pathlib,unittest,re
 import requests
 OUT=pathlib.Path("solar-goes-xrs-20250322-evidence");OUT.mkdir(exist_ok=True)
 BASE="https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes"
@@ -44,9 +44,18 @@ if __name__=="__main__":
       "negative_certified":False,"source_first_public_availability_proven":False,
       "science_gate":"G3_NOT_ACCEPTED","original_files":[]}
  for sat,day,name in TARGETS:
-  url=f"{BASE}/goes{sat}/l2/data/xrsf-l2-avg1m_science/2025/03/{name}"
-  obj={"satellite":sat,"date_utc":f"2025-03-{day}","original_url":url}
+  directory=f"{BASE}/goes{sat}/l2/data/xrsf-l2-avg1m_science/2025/03/"
+  obj={"satellite":sat,"date_utc":f"2025-03-{day}","source_directory":directory,
+       "initial_expected_name":name}
   try:
+   index=get(directory,max_bytes=250_000).decode("utf8","replace")
+   obj["source_directory_index_sha256"]=hashlib.sha256(index.encode("utf8")).hexdigest()
+   matches=sorted(set(re.findall(r"sci_xrsf-l2-avg1m_g"+str(sat)+r"_d202503"+day+r"_v[0-9-]+\\.nc",index)))
+   if not matches: raise ValueError("NO_MATCHING_DATE_IN_LIVE_SOURCE_DIRECTORY")
+   actual_name=matches[-1]
+   url=directory+actual_name
+   obj["original_url"]=url
+   obj["actual_discovered_name"]=actual_name
    raw=get(url)
    if not(raw.startswith(b"CDF") or raw.startswith(b"\x89HDF")):
     raise ValueError("NOT_VALID_NETCDF_MAGIC")
