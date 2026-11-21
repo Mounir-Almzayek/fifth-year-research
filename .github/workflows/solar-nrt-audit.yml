@@ -1,0 +1,31 @@
+name: Solar G1 NRT Source Audit
+on:
+  push:
+    branches: [solar-data-recovery-20261115]
+    paths:
+      - '.github/workflows/solar-nrt-audit.yml'
+      - 'research/solar_nrt/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bounded-jsoc-nrt-query:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install scientific readers
+        run: python -m pip install --disable-pip-version-check requests numpy astropy
+      - name: Test candidate matching and query actual JSOC NRT sources
+        run: python research/solar_nrt/nrt_probe.py
+      - name: Preserve original NRT source responses and explicit failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solar-g1-nrt-source-evidence
+          path: solar-nrt-evidence/
+          retention-days: 14
+          if-no-files-found: warn
