@@ -1,0 +1,31 @@
+name: Solar G3 Official NCEI GOES XRS Original Source Recovery
+on:
+  push:
+    branches: [solar-data-recovery-20261115]
+    paths:
+      - '.github/workflows/solar-goes-ncei.yml'
+      - 'research/solar_goes_ncei/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  capture-original-l2-xrs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install public source reader
+        run: python -m pip install --disable-pip-version-check requests
+      - name: Read and hash original NCEI GOES XRS L2 files
+        run: python research/solar_goes_ncei/recover.py
+      - name: Keep original files and explicit errors
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solar-g3-official-goes-ncei-original
+          path: solar-goes-ncei-evidence/
+          retention-days: 14
+          if-no-files-found: warn
