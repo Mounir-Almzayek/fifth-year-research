@@ -1,0 +1,30 @@
+name: Solar G1 Original CONF_DISAMBIG Source Probe
+on:
+  push:
+    branches: [solar-data-recovery-20261115]
+    paths:
+      - '.github/workflows/solar-conf-g1.yml'
+      - 'research/solar_conf/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bounded-conf-source-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --disable-pip-version-check requests numpy astropy
+      - name: Read exact JSOC definitive CEA conf_disambig without modifying source
+        run: python research/solar_conf/g1_conf_disambig_probe.py
+      - name: Preserve original segment bytes, DRMS replies and failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solar-g1-conf-source-evidence
+          path: solar-conf-evidence/
+          retention-days: 14
+          if-no-files-found: warn
