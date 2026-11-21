@@ -1,0 +1,30 @@
+name: Solar G1 Source Storage Unit Direct CONF Recovery
+on:
+  push:
+    branches: [solar-data-recovery-20261115]
+    paths:
+      - '.github/workflows/solar-conf-direct.yml'
+      - 'research/solar_conf_direct/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  direct-source-segment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --disable-pip-version-check requests numpy astropy
+      - name: Retry original source record folder without JSOC metadata API
+        run: python research/solar_conf_direct/same_unit_probe.py
+      - name: Preserve original source FITS and explicit failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solar-conf-direct-source-evidence
+          path: solar-conf-direct-evidence/
+          retention-days: 14
+          if-no-files-found: warn
