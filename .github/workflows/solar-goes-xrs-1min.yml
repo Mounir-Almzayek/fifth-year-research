@@ -1,0 +1,30 @@
+name: Solar G3 Original GOES 1-minute XRS Source Pilot
+on:
+  push:
+    branches: [solar-data-recovery-20261115]
+    paths:
+      - '.github/workflows/solar-goes-xrs-1min.yml'
+      - 'research/solar_goes_xrs_1min/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  recover-original-xrs-1min:
+    runs-on: ubuntu-latest
+    timeout-minutes: 13
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --disable-pip-version-check requests netCDF4 numpy
+      - name: Retrieve exact 2025-03-22 and 2025-03-23 GOES 16 and 18 XRS NetCDF sources
+        run: python research/solar_goes_xrs_1min/recover.py
+      - name: Preserve original NetCDF and source failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solar-g3-goes-xrs-20250322-original
+          path: solar-goes-xrs-20250322-evidence/
+          retention-days: 14
+          if-no-files-found: warn
