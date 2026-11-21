@@ -59,7 +59,7 @@ if __name__=="__main__":
    raw=get(url)
    if not(raw.startswith(b"CDF") or raw.startswith(b"\x89HDF")):
     raise ValueError("NOT_VALID_NETCDF_MAGIC")
-   path=OUT/name
+   path=OUT/actual_name
    path.write_bytes(raw)
    obj.update(state="BYTES_ACQUIRED",size_bytes=len(raw),
               sha256=hashlib.sha256(raw).hexdigest())
