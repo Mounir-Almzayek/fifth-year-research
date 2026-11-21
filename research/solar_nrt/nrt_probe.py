@@ -236,7 +236,7 @@ def wcs_date_v2():
    c=qry(series,h,epoch,groups[2])
    meta[tag]={"base":a,"date_fields":b,"auxiliary":c}
    save("wcs_date_v2/source_"+tag+"_"+str(h)+".json",meta[tag])
-  rec["query_status"]={k:{kind:v[k]["ok"] for kind in v} for k,v in meta.items()}
+  rec["query_status"]={k:{kind:v[kind]["ok"] for kind in v} for k,v in meta.items()}
   rec["core_fields"]={k:v["base"].get("row",{}) for k,v in meta.items()}
   rec["date_fields"]={k:v["date_fields"].get("row",{}) for k,v in meta.items()}
   rec["DATE_processing_not_publication"]=True
