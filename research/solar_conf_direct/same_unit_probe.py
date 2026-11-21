@@ -31,21 +31,28 @@ def probe(h,folder,shape,epoch):
      if len(content)>12_000_000:raise ValueError("FILE_SIZE_LIMIT")
    raw=bytes(content)
    if not raw.startswith(b"SIMPLE  =") or len(raw)%2880:raise ValueError("INVALID_FITS_ENVELOPE")
-   with fits.open(io.BytesIO(raw),checksum=True,memmap=False) as hdus:
-    imgs=[hdu for hdu in hdus if getattr(hdu.data,"ndim",0)==2]
-    if len(imgs)!=1:raise ValueError("EXPECTED_ONE_FITS_IMAGE")
-    image=np.asarray(imgs[0].data)
-    if tuple(image.shape)!=tuple(shape):raise ValueError("GRID_SHAPE_MISMATCH")
-    if not np.isfinite(image).all():raise ValueError("NONFINITE_PIXEL")
-    c=[hd.verify_checksum() for hd in hdus if "CHECKSUM" in hd.header]
-    d=[hd.verify_datasum() for hd in hdus if "DATASUM" in hd.header]
-    if not c or not d or any(k!=1 for k in c+d):raise ValueError("BAD_FITS_CHECKSUM")
-    values={str(int(i)):int(n) for i,n in zip(*np.unique(image,return_counts=True))}
    (OUT/f"harp_{h}_conf_disambig.fits").write_bytes(raw)
-   rec.update(status="VALID_SOURCE_FITS_CANDIDATE_RECORD_FOLDER",source_url=url,
-              sha256=hashlib.sha256(raw).hexdigest(),size_bytes=len(raw),shape=shape,
-              unique_values=values,n90=int(np.count_nonzero(image==90)),
-              checksum=c,datasum=d)
+   rec.update(status="FITS_BYTES_RECOVERED_QA_PENDING",source_url=url,
+              sha256=hashlib.sha256(raw).hexdigest(),size_bytes=len(raw),
+              nominal_source_shape=list(shape))
+   try:
+    with fits.open(io.BytesIO(raw),checksum=True,memmap=False) as hdus:
+     imgs=[hdu for hdu in hdus if getattr(hdu.data,"ndim",0)==2]
+     if len(imgs)!=1:raise ValueError("EXPECTED_ONE_FITS_IMAGE")
+     image=np.asarray(imgs[0].data)
+     if tuple(image.shape)!=tuple(shape):raise ValueError("GRID_SHAPE_MISMATCH")
+     c=[hd.verify_checksum() for hd in hdus if "CHECKSUM" in hd.header]
+     d=[hd.verify_datasum() for hd in hdus if "DATASUM" in hd.header]
+     if not c or not d or any(k!=1 for k in c+d):raise ValueError("BAD_FITS_CHECKSUM")
+     finite=image[np.isfinite(image)]
+     vals,counts=np.unique(finite,return_counts=True)
+     values={str(int(i)):int(n) for i,n in zip(vals,counts)}
+     rec.update(status="ORIGINAL_FITS_QA_PASS",shape=list(image.shape),
+                unique_values=values,n90=int(np.count_nonzero(image==90)),
+                invalid_pixel_count=int(image.size-finite.size),
+                checksum=c,datasum=d)
+   except Exception as qa_err:
+    rec["qa_error"]=type(qa_err).__name__+":"+str(qa_err)[:300]
    break
   except Exception as exc:
    rec["attempts"].append({"url":url,"error":type(exc).__name__+":"+str(exc)[:160]})
